@@ -33,12 +33,9 @@ jobs:
             # Ensure the remote SSH known_hosts is set up for github.com
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-            UPLOADS_DIR="$SERVER_PATH/backend/uploads"
-            BACKUP_TAR="/tmp/smtp.vinasai.ca-$(date +%Y%m%d-%H%M%S).tar.gz"
             
             # Perform a fresh clone
-            TEMP_CLONE_DIR="/tmp/sakaram-$(date +%s)"
+            TEMP_CLONE_DIR="/tmp/smtp.vinasai.ca-$(date +%s)"
             echo "Cloning repository into $TEMP_CLONE_DIR..."
             
             git clone "$REPO_URL" "$TEMP_CLONE_DIR"
