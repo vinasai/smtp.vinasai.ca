@@ -30,10 +30,9 @@ app.get("/health", (req, res) => {
   res.json({ status: "SMTP middleware running" });
 });
 
-// Serve React dashboard
-app.use(express.static(path.join(__dirname, "../client/dist")));
+app.use(express.static(path.join(__dirname, "../../frontend/dist")));
 app.get("/{*splat}", (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/dist", "index.html"));
+  res.sendFile(path.join(__dirname, "../../frontend/dist", "index.html"));
 });
 
 const PORT = process.env.PORT || 5015;
