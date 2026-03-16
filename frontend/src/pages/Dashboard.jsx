@@ -6,16 +6,26 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
+  const [actionLoading, setActionLoading] = useState(null);
   const navigate = useNavigate();
 
   const fetchProjects = async () => {
     try {
       const res = await api.get("/projects");
       setProjects(res.data.projects);
-    } catch {
-      setError("Failed to load projects");
+      setError("");
+    } catch (err) {
+      setError(
+        err.response?.status === 401
+          ? "Session expired. Please login again."
+          : "Failed to load projects.",
+      );
+    } finally {
+      setFetching(false);
     }
   };
 
@@ -25,42 +35,50 @@ export default function Dashboard() {
 
   const createProject = async (e) => {
     e.preventDefault();
-    if (!newName.trim()) return;
+    if (!newName.trim()) {
+      setFormError("Project name is required.");
+      return;
+    }
     setLoading(true);
-    setError("");
+    setFormError("");
     try {
       await api.post("/projects", { name: newName.trim() });
       setNewName("");
       fetchProjects();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to create project");
+      setFormError(err.response?.data?.message || "Failed to create project.");
     } finally {
       setLoading(false);
     }
   };
 
-  const revokeProject = async (id) => {
-    if (!confirm("Revoke this API key?")) return;
-    await api.patch(`/projects/${id}/revoke`);
-    fetchProjects();
-  };
-
-  const regenerateKey = async (id) => {
-    if (!confirm("Regenerate API key? The old key will stop working.")) return;
-    await api.patch(`/projects/${id}/regenerate`);
-    fetchProjects();
-  };
-
-  const deleteProject = async (id) => {
-    if (!confirm("Delete this project permanently?")) return;
-    await api.delete(`/projects/${id}`);
-    fetchProjects();
+  const handleAction = async (id, action) => {
+    const messages = {
+      revoke: "Revoke this API key? Services using it will lose access.",
+      regenerate:
+        "Regenerate API key? The old key will stop working immediately.",
+      delete: "Delete this project permanently? This cannot be undone.",
+    };
+    if (!confirm(messages[action])) return;
+    setActionLoading(`${id}-${action}`);
+    try {
+      if (action === "revoke") await api.patch(`/projects/${id}/revoke`);
+      else if (action === "regenerate")
+        await api.patch(`/projects/${id}/regenerate`);
+      else if (action === "delete") await api.delete(`/projects/${id}`);
+      fetchProjects();
+    } catch {
+      alert(`Failed to ${action} project. Please try again.`);
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const copyKey = (id, key) => {
-    navigator.clipboard.writeText(key);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    navigator.clipboard.writeText(key).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
   };
 
   const logout = () => {
@@ -68,236 +86,411 @@ export default function Dashboard() {
     navigate("/login");
   };
 
+  const activeCount = projects.filter((p) => p.isActive).length;
+
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <div>
-          <h1 style={styles.title}>SMTP Middleware</h1>
-          <p style={styles.subtitle}>Manage projects & API keys</p>
-        </div>
-        <button onClick={logout} style={styles.logoutBtn}>
-          Logout
-        </button>
-      </div>
+    <div className="min-h-screen bg-slate-950">
+      <div className="fixed inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:48px_48px] pointer-events-none" />
 
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>Create New Project</h2>
-        <form onSubmit={createProject} style={styles.form}>
-          <input
-            type="text"
-            placeholder="Project name (e.g. Service A)"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            style={styles.input}
-          />
-          <button type="submit" style={styles.createBtn} disabled={loading}>
-            {loading ? "Creating..." : "Create Project"}
-          </button>
-        </form>
-        {error && <p style={styles.error}>{error}</p>}
-      </div>
-
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>Projects ({projects.length})</h2>
-        {projects.length === 0 ? (
-          <p style={styles.empty}>No projects yet. Create one above.</p>
-        ) : (
-          projects.map((p) => (
-            <div
-              key={p._id}
-              style={{ ...styles.projectRow, opacity: p.isActive ? 1 : 0.5 }}
-            >
-              <div style={styles.projectInfo}>
-                <div style={styles.projectName}>
-                  {p.name}
-                  <span
-                    style={{
-                      ...styles.badge,
-                      background: p.isActive ? "#22c55e" : "#ef4444",
-                    }}
-                  >
-                    {p.isActive ? "Active" : "Revoked"}
-                  </span>
-                </div>
-                <div style={styles.apiKeyRow}>
-                  <code style={styles.apiKey}>{p.apiKey.slice(0, 24)}...</code>
-                  <button
-                    onClick={() => copyKey(p._id, p.apiKey)}
-                    style={styles.copyBtn}
-                  >
-                    {copiedId === p._id ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-                <div style={styles.meta}>
-                  Created {new Date(p.createdAt).toLocaleDateString()} by{" "}
-                  {p.createdBy}
-                </div>
-              </div>
-              <div style={styles.actions}>
-                <button
-                  onClick={() => regenerateKey(p._id)}
-                  style={styles.regenBtn}
-                >
-                  Regenerate
-                </button>
-                {p.isActive && (
-                  <button
-                    onClick={() => revokeProject(p._id)}
-                    style={styles.revokeBtn}
-                  >
-                    Revoke
-                  </button>
-                )}
-                <button
-                  onClick={() => deleteProject(p._id)}
-                  style={styles.deleteBtn}
-                >
-                  Delete
-                </button>
-              </div>
+      {/* Header */}
+      <header className="relative border-b border-slate-800 bg-slate-950/80 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30">
+              <svg
+                className="w-5 h-5 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
+              </svg>
             </div>
-          ))
+            <div>
+              <h1 className="text-white font-bold text-base leading-none">
+                SMTP Middleware
+              </h1>
+              <p className="text-slate-500 text-xs mt-0.5">smtp.vinasai.ca</p>
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all text-sm font-medium"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+              />
+            </svg>
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <main className="relative max-w-5xl mx-auto px-6 py-8 space-y-6">
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            {
+              label: "Total Projects",
+              value: projects.length,
+              color: "text-white",
+            },
+            {
+              label: "Active Keys",
+              value: activeCount,
+              color: "text-emerald-400",
+            },
+            {
+              label: "Revoked Keys",
+              value: projects.length - activeCount,
+              color: "text-red-400",
+            },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              className="bg-slate-900 border border-slate-800 rounded-xl p-4"
+            >
+              <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">
+                {stat.label}
+              </p>
+              <p className={`text-3xl font-bold mt-1 ${stat.color}`}>
+                {stat.value}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* Global error */}
+        {error && (
+          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+            <svg
+              className="w-5 h-5 text-red-400 shrink-0"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
         )}
-      </div>
+
+        {/* Create project */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+          <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+            <svg
+              className="w-4 h-4 text-indigo-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            New Project
+          </h2>
+          <form onSubmit={createProject} className="flex gap-3">
+            <div className="flex-1">
+              <input
+                type="text"
+                placeholder="e.g. Service A, Booking System..."
+                value={newName}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  setFormError("");
+                }}
+                className={`w-full px-4 py-2.5 rounded-xl bg-slate-800 border text-white placeholder:text-slate-600 text-sm focus:outline-none focus:ring-2 transition-all ${
+                  formError
+                    ? "border-red-500/70 focus:ring-red-500/30"
+                    : "border-slate-700 focus:ring-indigo-500/40 focus:border-indigo-500/60"
+                }`}
+              />
+              {formError && (
+                <p className="text-red-400 text-xs mt-1.5">{formError}</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 whitespace-nowrap"
+            >
+              {loading ? (
+                <svg
+                  className="animate-spin w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v8z"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+              )}
+              {loading ? "Creating..." : "Create"}
+            </button>
+          </form>
+        </div>
+
+        {/* Projects list */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+            <h2 className="text-white font-semibold text-base">Projects</h2>
+            <span className="text-slate-500 text-sm">
+              {projects.length} total
+            </span>
+          </div>
+
+          {fetching ? (
+            <div className="flex items-center justify-center py-16">
+              <svg
+                className="animate-spin w-6 h-6 text-indigo-500"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v8z"
+                />
+              </svg>
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center mb-3">
+                <svg
+                  className="w-6 h-6 text-slate-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                  />
+                </svg>
+              </div>
+              <p className="text-slate-400 font-medium text-sm">
+                No projects yet
+              </p>
+              <p className="text-slate-600 text-xs mt-1">
+                Create your first project above
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800">
+              {projects.map((p) => (
+                <div
+                  key={p._id}
+                  className={`px-6 py-4 transition-all ${!p.isActive ? "opacity-50" : "hover:bg-slate-800/30"}`}
+                >
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-white font-semibold text-sm">
+                          {p.name}
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
+                            p.isActive
+                              ? "bg-emerald-500/15 text-emerald-400"
+                              : "bg-red-500/15 text-red-400"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${p.isActive ? "bg-emerald-400" : "bg-red-400"}`}
+                          />
+                          {p.isActive ? "Active" : "Revoked"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 mb-2">
+                        <code className="text-xs text-slate-400 bg-slate-800 px-3 py-1.5 rounded-lg font-mono border border-slate-700 truncate max-w-xs">
+                          {p.apiKey.slice(0, 28)}...
+                        </code>
+                        <button
+                          onClick={() => copyKey(p._id, p.apiKey)}
+                          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all border ${
+                            copiedId === p._id
+                              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                              : "bg-slate-800 text-slate-400 hover:text-white border-slate-700 hover:border-slate-600"
+                          }`}
+                        >
+                          {copiedId === p._id ? (
+                            <>
+                              <svg
+                                className="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M5 13l4 4L19 7"
+                                />
+                              </svg>
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <svg
+                                className="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                                />
+                              </svg>
+                              Copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <p className="text-slate-600 text-xs">
+                        Created{" "}
+                        {new Date(p.createdAt).toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        })}{" "}
+                        · by {p.createdBy}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleAction(p._id, "regenerate")}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 transition-all disabled:opacity-50"
+                      >
+                        <svg
+                          className={`w-3.5 h-3.5 ${actionLoading === `${p._id}-regenerate` ? "animate-spin" : ""}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                          />
+                        </svg>
+                        Regenerate
+                      </button>
+
+                      {p.isActive && (
+                        <button
+                          onClick={() => handleAction(p._id, "revoke")}
+                          disabled={!!actionLoading}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border border-orange-500/20 transition-all disabled:opacity-50"
+                        >
+                          <svg
+                            className="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                            />
+                          </svg>
+                          Revoke
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => handleAction(p._id, "delete")}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-all disabled:opacity-50"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    maxWidth: "900px",
-    margin: "0 auto",
-    padding: "24px",
-    fontFamily: "sans-serif",
-  },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "24px",
-  },
-  title: { margin: 0, fontSize: "24px", fontWeight: "700", color: "#1a1a2e" },
-  subtitle: { margin: 0, color: "#888", fontSize: "14px" },
-  logoutBtn: {
-    padding: "8px 16px",
-    background: "#ef4444",
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "600",
-  },
-  card: {
-    background: "#fff",
-    padding: "24px",
-    borderRadius: "12px",
-    boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
-    marginBottom: "24px",
-  },
-  sectionTitle: {
-    margin: "0 0 16px",
-    fontSize: "18px",
-    fontWeight: "600",
-    color: "#1a1a2e",
-  },
-  form: { display: "flex", gap: "12px" },
-  input: {
-    flex: 1,
-    padding: "10px 14px",
-    border: "1px solid #ddd",
-    borderRadius: "8px",
-    fontSize: "15px",
-  },
-  createBtn: {
-    padding: "10px 20px",
-    background: "#4f46e5",
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "600",
-    whiteSpace: "nowrap",
-  },
-  error: { color: "red", fontSize: "14px", marginTop: "8px" },
-  empty: { color: "#aaa", textAlign: "center", padding: "24px 0" },
-  projectRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "16px 0",
-    borderBottom: "1px solid #f0f0f0",
-    gap: "12px",
-    flexWrap: "wrap",
-  },
-  projectInfo: { flex: 1 },
-  projectName: {
-    fontWeight: "600",
-    fontSize: "16px",
-    marginBottom: "6px",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-  },
-  badge: {
-    fontSize: "11px",
-    padding: "2px 8px",
-    borderRadius: "20px",
-    color: "#fff",
-    fontWeight: "500",
-  },
-  apiKeyRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    marginBottom: "4px",
-  },
-  apiKey: {
-    background: "#f5f5f5",
-    padding: "4px 8px",
-    borderRadius: "4px",
-    fontSize: "13px",
-    color: "#555",
-  },
-  copyBtn: {
-    padding: "4px 10px",
-    fontSize: "12px",
-    background: "#e0e7ff",
-    color: "#4f46e5",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontWeight: "600",
-  },
-  meta: { fontSize: "12px", color: "#aaa" },
-  actions: { display: "flex", gap: "8px", flexWrap: "wrap" },
-  regenBtn: {
-    padding: "6px 12px",
-    background: "#fef3c7",
-    color: "#d97706",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontWeight: "600",
-    fontSize: "13px",
-  },
-  revokeBtn: {
-    padding: "6px 12px",
-    background: "#fee2e2",
-    color: "#ef4444",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontWeight: "600",
-    fontSize: "13px",
-  },
-  deleteBtn: {
-    padding: "6px 12px",
-    background: "#f3f4f6",
-    color: "#374151",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontWeight: "600",
-    fontSize: "13px",
-  },
-};
