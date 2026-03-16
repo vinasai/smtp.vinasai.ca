@@ -1,6 +1,6 @@
 const express = require("express");
-const { sendMailHandler } = require("../controllers/mail.controller");
 const { authenticateApiKey } = require("../middleware/auth.middleware");
+const { sendMailHandler } = require("../controllers/mail.controller");
 
 const router = express.Router();
 
