@@ -1,64 +1,95 @@
 name: smtp.vinasai.ca deploy
+
 on:
   push:
     branches:
       - main
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: env
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install & Build Frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-      - name: Deploy to Server
+
+      - name: Copy frontend build to server
+        run: |
+          scp -i ~/.ssh/id_rsa -r frontend/dist ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.WORK_DIR }}/frontend/dist
+
+      - name: Deploy backend to server
         run: |
           set -e
-
           BACKEND_ENV_B64="$(printf '%s' "${{ vars.BACKEND_ENV }}" | base64 -w0)"
-          
+
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-          "SERVER_PATH='${{ secrets.WORK_DIR }}' BACKEND_DIR='${{ secrets.WORK_DIR }}' BACKEND_ENV_B64='$BACKEND_ENV_B64' bash -s" << 'EOF'
+          "WORK_DIR='${{ secrets.WORK_DIR }}' BACKEND_ENV_B64='$BACKEND_ENV_B64' bash -s" << 'EOF'
             set -e
 
-            # Define REPO_URL inside the remote script
             REPO_URL='git@github.com:vinasai/smtp.vinasai.ca.git'
-
             echo "--- Starting Deployment ---"
-            # Ensure the remote SSH known_hosts is set up for github.com
+
+            # Setup GitHub SSH
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
-            
-            # Perform a fresh clone
-            TEMP_CLONE_DIR="/tmp/smtp.vinasai.ca-$(date +%s)"
-            echo "Cloning repository into $TEMP_CLONE_DIR..."
-            
-            git clone "$REPO_URL" "$TEMP_CLONE_DIR"
-            
-            # Replace the old application code
-            echo "Updating application code in $SERVER_PATH..."
-            rm -rf "$SERVER_PATH"
-            mkdir -p "$SERVER_PATH"
-            mv "$TEMP_CLONE_DIR"/* "$SERVER_PATH/"
-            rm -rf "$TEMP_CLONE_DIR" 
-            cd "$BACKEND_DIR"
-            
-            yarn install --production=false
-            echo "Building the application..."
 
-            echo "Writing backend .env..."
+            # Fresh clone to temp dir
+            TEMP_DIR="/tmp/smtp-deploy-$(date +%s)"
+            echo "Cloning into $TEMP_DIR..."
+            git clone "$REPO_URL" "$TEMP_DIR"
+
+            # Backup existing frontend dist (built on CI, copied via scp)
+            DIST_BACKUP="/tmp/frontend-dist-backup"
+            rm -rf "$DIST_BACKUP"
+            cp -r "$WORK_DIR/frontend/dist" "$DIST_BACKUP" 2>/dev/null || true
+
+            # Replace app code
+            echo "Replacing app code..."
+            rm -rf "$WORK_DIR"
+            mkdir -p "$WORK_DIR"
+            mv "$TEMP_DIR"/* "$WORK_DIR/"
+            rm -rf "$TEMP_DIR"
+
+            # Restore frontend dist
+            mkdir -p "$WORK_DIR/frontend"
+            cp -r "$DIST_BACKUP" "$WORK_DIR/frontend/dist"
+
+            # Install backend dependencies
+            echo "Installing backend dependencies..."
+            cd "$WORK_DIR/backend"
+            npm install --omit=dev
+
+            # Write .env
+            echo "Writing .env..."
             echo "$BACKEND_ENV_B64" | base64 -d > .env
             chmod 600 .env
 
-            pm2 describe smtp.vinasai.ca >/dev/null 2>&1 && pm2 restart smtp.vinasai.ca --update-env || pm2 start npm --name smtp.vinasai.ca -- start
+            # Start or restart with pm2
+            echo "Restarting app with pm2..."
+            pm2 describe smtp.vinasai.ca > /dev/null 2>&1 \
+              && pm2 restart smtp.vinasai.ca --update-env \
+              || pm2 start src/server.js --name smtp.vinasai.ca
+
             pm2 save
 
-            # rm -f .env .env.production
-            
             echo "--- Deployment Finished Successfully ---"
           EOF
