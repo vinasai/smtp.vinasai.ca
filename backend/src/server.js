@@ -12,6 +12,8 @@ const mailRoutes = require("./routes/mail.routes");
 
 const app = express();
 
+app.set("trust proxy", 1)
+
 connectDB();
 
 app.use(cors());
