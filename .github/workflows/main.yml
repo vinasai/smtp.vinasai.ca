@@ -1,15 +1,12 @@
 name: smtp.vinasai.ca deploy
-
 on:
   push:
     branches:
       - main
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: env
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,17 +31,15 @@ jobs:
 
       - name: Copy frontend build to server
         run: |
-          scp -i ~/.ssh/id_rsa -r frontend/dist ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.WORK_DIR }}/frontend/dist
+          scp -i ~/.ssh/id_rsa -r frontend/dist ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/frontend-dist-new
 
       - name: Deploy backend to server
         run: |
           set -e
           BACKEND_ENV_B64="$(printf '%s' "${{ vars.BACKEND_ENV }}" | base64 -w0)"
-
           ssh -i ~/.ssh/id_rsa ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
           "WORK_DIR='${{ secrets.WORK_DIR }}' BACKEND_ENV_B64='$BACKEND_ENV_B64' bash -s" << 'EOF'
             set -e
-
             REPO_URL='git@github.com:vinasai/smtp.vinasai.ca.git'
             echo "--- Starting Deployment ---"
 
@@ -57,21 +52,33 @@ jobs:
             echo "Cloning into $TEMP_DIR..."
             git clone "$REPO_URL" "$TEMP_DIR"
 
-            # Backup existing frontend dist (built on CI, copied via scp)
-            DIST_BACKUP="/tmp/frontend-dist-backup"
-            rm -rf "$DIST_BACKUP"
-            cp -r "$WORK_DIR/frontend/dist" "$DIST_BACKUP" 2>/dev/null || true
-
-            # Replace app code
+            # Replace app code (excluding frontend/dist)
             echo "Replacing app code..."
+            # Preserve the current frontend/dist during wipe
+            mkdir -p /tmp/frontend-dist-preserve
+            cp -r "$WORK_DIR/frontend/dist" /tmp/frontend-dist-preserve/ 2>/dev/null || true
+
             rm -rf "$WORK_DIR"
             mkdir -p "$WORK_DIR"
             mv "$TEMP_DIR"/* "$WORK_DIR/"
             rm -rf "$TEMP_DIR"
 
-            # Restore frontend dist
+            # Use the newly built dist from CI (copied via scp to /tmp/frontend-dist-new)
+            echo "Restoring frontend dist..."
             mkdir -p "$WORK_DIR/frontend"
-            cp -r "$DIST_BACKUP" "$WORK_DIR/frontend/dist"
+            if [ -d "/tmp/frontend-dist-new" ]; then
+              echo "Using new CI-built dist..."
+              cp -r /tmp/frontend-dist-new "$WORK_DIR/frontend/dist"
+              rm -rf /tmp/frontend-dist-new
+            else
+              echo "WARNING: New dist not found, falling back to preserved dist..."
+              cp -r /tmp/frontend-dist-preserve/dist "$WORK_DIR/frontend/dist"
+            fi
+            rm -rf /tmp/frontend-dist-preserve
+
+            # Verify dist landed correctly
+            echo "--- Verifying dist contents ---"
+            ls -la "$WORK_DIR/frontend/dist/"
 
             # Install backend dependencies
             echo "Installing backend dependencies..."
@@ -88,8 +95,11 @@ jobs:
             pm2 describe smtp.vinasai.ca > /dev/null 2>&1 \
               && pm2 restart smtp.vinasai.ca --update-env \
               || pm2 start src/server.js --name smtp.vinasai.ca
-
             pm2 save
+
+            # Reload Nginx to pick up new frontend files
+            echo "Reloading Nginx..."
+            sudo systemctl reload nginx
 
             echo "--- Deployment Finished Successfully ---"
           EOF
