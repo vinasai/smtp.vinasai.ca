@@ -1,7 +1,7 @@
 const { sendMail } = require("../services/mail.service");
 
 const sendMailHandler = async (req, res) => {
-  const { from, appPassword, to, subject, body } = req.body;
+  const { from, appPassword, to, subject, body, attachments } = req.body;
 
   if (!from || !appPassword || !to || !subject || !body) {
     return res.status(400).json({
@@ -11,7 +11,15 @@ const sendMailHandler = async (req, res) => {
   }
 
   try {
-    const messageId = await sendMail({ from, appPassword, to, subject, body });
+    const messageId = await sendMail({
+      from,
+      appPassword,
+      to,
+      subject,
+      body,
+      // Optional - only passed if present
+      attachments: attachments || [],
+    });
     return res.status(200).json({
       success: true,
       message: "Email sent successfully",
