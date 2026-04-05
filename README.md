@@ -108,6 +108,16 @@ POST /api/send-mail
 | `to` | string | ✅ | Recipient email address |
 | `subject` | string | ✅ | Email subject |
 | `body` | string | ✅ | HTML email body |
+| `replyTo` | string | ❌ | Reply-to email address |
+| `attachments` | array | ❌ | File attachments (see below) |
+
+**Attachment Object:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | Original filename (e.g. `resume.pdf`) |
+| `content` | string | Base64 encoded file content |
+| `encoding` | string | Must be `"base64"` |
+| `contentType` | string | MIME type (e.g. `application/pdf`) |
 
 **Success Response `200`:**
 
@@ -203,7 +213,7 @@ EMAIL_TO_USER=client@gmail.com
 
 ### Step 3 — Replace SMTP code
 
-**Node.js**
+**Node.js (basic)**
 
 ```javascript
 const axios = require("axios");
@@ -222,6 +232,48 @@ await axios.post(
       "x-api-key": process.env.SMTP_MIDDLEWARE_KEY,
       "Content-Type": "application/json",
     },
+  },
+);
+```
+
+**Node.js (with attachments)**
+
+Attachments must be base64 encoded before sending. This is useful for sending files like resumes, invoices, or reports that are already in memory (e.g. from a multer upload).
+
+```javascript
+const axios = require("axios");
+const fs = require("fs");
+
+// If file is a Buffer (e.g. from multer memoryStorage)
+const base64File = fileBuffer.toString("base64");
+
+// If file is on disk
+// const base64File = fs.readFileSync("/path/to/file").toString("base64");
+
+await axios.post(
+  process.env.SMTP_MIDDLEWARE_URL,
+  {
+    from: process.env.EMAIL_USER,
+    appPassword: process.env.EMAIL_PASS,
+    to: process.env.EMAIL_TO_USER,
+    subject: "Your subject",
+    body: "<p>Your HTML body</p>",
+    replyTo: "applicant@example.com",
+    attachments: [
+      {
+        filename: "resume.pdf",
+        content: base64File,
+        encoding: "base64",
+        contentType: "application/pdf",
+      },
+    ],
+  },
+  {
+    headers: {
+      "x-api-key": process.env.SMTP_MIDDLEWARE_KEY,
+      "Content-Type": "application/json",
+    },
+    timeout: 30000, // 30s timeout for large files
   },
 );
 ```
